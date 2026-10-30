@@ -21,6 +21,7 @@ tickets, and admins approve events and manage users.
 - Mock payment screen (card or UPI) with loading, success and simulated-decline paths
 - Booking confirmation with one QR ticket per seat
 - My bookings (list, detail, cancel) and My tickets (upcoming/past tabs with QR codes)
+- Apply a coupon code at checkout with a live discount preview
 - Saved events, profile editing, password change, organizer access request
 - Email verification / password reset via 6-digit OTP
 
@@ -29,9 +30,11 @@ tickets, and admins approve events and manage users.
 - Create and edit events (banner, date/time, venue or online link, ticket types)
 - Draft → submit for approval → publish flow
 - Cancel an event, automatically notifying every attendee
+- Create percentage or fixed-amount **coupons** per event, with usage caps and expiry
 - Analytics: revenue, tickets sold, check-ins, per-event breakdown and a 6-month trend
 - Attendee list per event
-- QR check-in — single use, with clear feedback for already-used or invalid tickets
+- QR check-in — scan with the camera or type the code; single use, with clear feedback for
+  already-used or invalid tickets
 
 **Admin**
 
@@ -62,7 +65,7 @@ tickets, and admins approve events and manage users.
 | Server state | **TanStack Query**                                       | Caching and refetch-after-mutation                                             |
 | Forms        | **React Hook Form** + **Zod**                            | One schema validates the form _and_ the API                                    |
 | Charts       | **Recharts**                                             | Dashboard visualisations                                                       |
-| QR           | **qrcode.react**                                         | Client-rendered ticket QR codes                                                |
+| QR           | **qrcode.react** / **@zxing/browser**                    | Render ticket QR codes, and decode them at the door                            |
 | Tests        | **Vitest** + Testing Library                             | Fast unit and component tests                                                  |
 
 ---
@@ -159,9 +162,12 @@ app/
   api/          Route handlers — the backend API
 components/ui/  Design-system primitives
 features/       Feature modules (schema + service + components + api client)
+                auth/ events/ bookings/ tickets/ coupons/ organizer/ admin/
+                dashboard/ profile/
 lib/            Prisma client, env, auth, http helpers, utils, logger
 prisma/         schema.prisma, migrations, seed.ts
-docs/           Architecture, flow diagrams, ER diagram, API reference
+scripts/        prepare-db.mjs — swaps the Prisma provider at deploy time
+docs/           Architecture, flow diagrams, ER diagram, API + deployment docs
 proxy.ts        Route protection (Next 16's replacement for middleware)
 ```
 
@@ -180,6 +186,9 @@ proxy.ts        Route protection (Next 16's replacement for middleware)
 - **Auth without `localStorage`.** Access (15 min) and refresh (7 day) tokens live in
   httpOnly cookies; refresh tokens are rotated on every use and hashed at rest.
 - **Mock payments.** `Payment` records only method, amount, status and a mock reference.
+- **Coupons.** A code is previewed in the booking widget for instant feedback, then
+  re-validated and applied inside the seat-hold transaction, so the authoritative discount
+  can never be spoofed by the client.
 
 Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 [`docs/FLOWS.md`](docs/FLOWS.md) · [`docs/ER_DIAGRAM.md`](docs/ER_DIAGRAM.md) ·
@@ -189,11 +198,20 @@ Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 
 ## Deploying
 
-1. **Database** — create a free Postgres instance (Neon / Supabase / Railway). In
-   `prisma/schema.prisma` change `provider = "sqlite"` to `provider = "postgresql"`, set
-   `DATABASE_URL`, then run `pnpm prisma migrate deploy && pnpm db:seed`.
-2. **App** — deploy to Vercel (or any Node host) with the same environment variables.
-3. Set `NEXT_PUBLIC_APP_URL` to the deployed origin so notification links resolve.
+The full walkthrough — Neon Postgres, environment variables, Vercel import and a
+verification checklist — lives in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). In short:
+
+1. **Database** — create a free Postgres instance (Neon / Supabase / Railway) and copy its
+   connection string.
+2. **Schema + seed** — from your machine:
+   `pnpm db:use-postgres && pnpm prisma db push && pnpm db:seed && pnpm db:use-sqlite`
+3. **App** — import the repo into Vercel. `vercel.json` already sets the build command, and
+   `scripts/prepare-db.mjs` switches Prisma to Postgres automatically when
+   `DATABASE_PROVIDER=postgresql` is set.
+4. **Environment variables** — at minimum `DATABASE_URL`, `DATABASE_PROVIDER`,
+   `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` and `NEXT_PUBLIC_APP_URL`.
+
+> `NEXT_PUBLIC_APP_URL` is inlined at build time — set it, then redeploy if you change it.
 
 ---
 
@@ -201,8 +219,8 @@ Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 
 `pnpm test:run` runs the Vitest suite (unit tests over validation schemas, formatting utils
 and a component test). API and booking flows were verified manually end-to-end against a
-running server, including hold → mock payment → QR ticket issuance, cancellation, and
-single-use check-in.
+running server, including hold → mock payment → QR ticket issuance, coupon redemption with
+the discount applied, cancellation, and single-use check-in.
 
 ---
 
@@ -212,6 +230,7 @@ single-use check-in.
 - Organizer access is granted by an admin; there is no self-serve upgrade.
 - Email is not actually sent unless `RESEND_API_KEY` is configured — OTP codes are logged
   (and returned in the API response in development only).
-- Coupon support exists in the data model and checkout pricing, but there is no coupon
-  management UI yet.
-- QR scanning is by code entry; a camera-based scanner can be layered on the same endpoint.
+- Coupons are scoped to a single event; there are no platform-wide or first-order-only
+  campaigns.
+- Camera scanning needs a secure context, so it works on `localhost` and on the HTTPS
+  deployment but not over plain HTTP.

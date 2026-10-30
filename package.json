@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "node scripts/prepare-db.mjs && prisma generate && next build",
+    "postinstall": "node scripts/prepare-db.mjs && prisma generate",
     "start": "next start",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
@@ -21,10 +23,15 @@
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:use-postgres": "node scripts/prepare-db.mjs --postgres",
+    "db:use-sqlite": "node scripts/prepare-db.mjs --sqlite"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.2",
