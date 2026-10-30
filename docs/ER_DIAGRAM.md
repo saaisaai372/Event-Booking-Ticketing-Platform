@@ -210,11 +210,25 @@ erDiagram
 - **Payments:** `Payment` stores only the method, status, amount and a mock reference. Card
   numbers, CVCs and UPI IDs are never accepted or persisted.
 
-## Migrations and seeding
+## Schema sync and seeding
+
+The schema is applied declaratively with `prisma db push` rather than migration files, so
+the same two commands work against any Postgres database (and against a SQLite file, if you
+point `DATABASE_URL` at one — the provider follows the URL automatically).
 
 ```bash
-pnpm db:migrate    # create/apply migrations in development
-pnpm db:seed       # 8 users, 8 categories, 12 events, 25 ticket types, a demo booking
-pnpm db:deploy     # apply migrations in production
-pnpm db:studio     # browse the data
+pnpm db:push    # create/update the tables from prisma/schema.prisma
+pnpm db:seed    # 8 users, 8 categories, 12 events, 25 ticket types, a demo booking
+pnpm db:studio  # browse the data
 ```
+
+> `pnpm db:seed` clears existing rows before inserting, so treat it as destructive.
+
+## Engine notes
+
+- **Postgres in every environment.** The datasource is `postgresql`; `scripts/prepare-db.mjs`
+  keeps it aligned with `DATABASE_URL` and refuses to run if an override contradicts the URL.
+- **Enums are strings.** SQLite has no native enum type, and validated `String` columns keep
+  the schema portable across both engines (values are enforced in the service layer with Zod).
+- **Connection pooling.** On a serverless host, point `DATABASE_URL` at Neon's pooled
+  (`-pooler`) host so short-lived functions do not exhaust direct connections.

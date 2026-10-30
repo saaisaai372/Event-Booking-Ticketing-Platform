@@ -60,7 +60,7 @@ tickets, and admins approve events and manage users.
 | Framework    | **Next.js 16 (App Router)**                              | One codebase for UI + API, React Server Components, file-based routing         |
 | Language     | **TypeScript (strict)**                                  | Types shared between forms, services and API                                   |
 | Styling      | **Tailwind CSS v4** + owned shadcn-style primitives      | Semantic design tokens, no heavy UI dependency                                 |
-| Database     | **Prisma** + **SQLite** (dev) / **Postgres** (prod)      | Productive local dev with a realistic production path                          |
+| Database     | **Prisma** + **PostgreSQL** (Neon)                       | Serverless-friendly managed Postgres, schema-first workflow                    |
 | Auth         | **Custom JWT** (`jose`) + **bcrypt** in httpOnly cookies | Short-lived access token + rotating refresh token, no tokens in `localStorage` |
 | Server state | **TanStack Query**                                       | Caching and refetch-after-mutation                                             |
 | Forms        | **React Hook Form** + **Zod**                            | One schema validates the form _and_ the API                                    |
@@ -81,8 +81,8 @@ pnpm install
 # 2. Configure environment
 cp .env.example .env          # then edit the secrets (see below)
 
-# 3. Create the database and generate the Prisma client
-pnpm db:migrate
+# 3. Create the tables and generate the Prisma client
+pnpm db:push
 
 # 4. Seed demo data (12 events, 8 categories, 3 roles)
 pnpm db:seed
@@ -101,7 +101,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Variable                                   | Required | Description                                                                                                                          |
 | ------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`                             | ✅       | `file:./dev.db` for SQLite locally; a Postgres URL in production                                                                     |
+| `DATABASE_URL`                             | ✅       | Postgres URL. The Prisma provider is inferred from the scheme (`file:` → sqlite, `postgresql://` → postgres).                        |
+| `DATABASE_URL_POOLED`                      | —        | Optional pooled URL for serverless hosts (Neon's `-pooler` host).                                                                    |
 | `JWT_ACCESS_SECRET`                        | ✅       | Signs the 15-minute access token                                                                                                     |
 | `JWT_REFRESH_SECRET`                       | ✅       | Signs refresh material                                                                                                               |
 | `ACCESS_TOKEN_TTL_MINUTES`                 | —        | Access token lifetime (default `15`)                                                                                                 |
@@ -134,20 +135,20 @@ The login screen has one-click buttons that fill these credentials.
 
 ## Scripts
 
-| Command                             | Description                    |
-| ----------------------------------- | ------------------------------ |
-| `pnpm dev`                          | Start the dev server on :3000  |
-| `pnpm build` / `pnpm start`         | Production build / serve       |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint                         |
-| `pnpm format` / `pnpm format:check` | Prettier                       |
-| `pnpm typecheck`                    | `tsc --noEmit`                 |
-| `pnpm test` / `pnpm test:run`       | Vitest (watch / once)          |
-| `pnpm test:coverage`                | Vitest with V8 coverage        |
-| `pnpm db:migrate`                   | Create/apply dev migrations    |
-| `pnpm db:seed`                      | Seed demo data (idempotent)    |
-| `pnpm db:reset`                     | Drop, re-migrate and re-seed   |
-| `pnpm db:deploy`                    | Apply migrations in production |
-| `pnpm db:studio`                    | Browse the database            |
+| Command                             | Description                     |
+| ----------------------------------- | ------------------------------- |
+| `pnpm dev`                          | Start the dev server on :3000   |
+| `pnpm build` / `pnpm start`         | Production build / serve        |
+| `pnpm vercel-build`                 | Build command Vercel runs       |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                          |
+| `pnpm format` / `pnpm format:check` | Prettier                        |
+| `pnpm typecheck`                    | `tsc --noEmit`                  |
+| `pnpm test` / `pnpm test:run`       | Vitest (watch / once)           |
+| `pnpm test:coverage`                | Vitest with V8 coverage         |
+| `pnpm db:push`                      | Sync the schema to the database |
+| `pnpm db:seed`                      | Seed demo data (idempotent)     |
+| `pnpm db:studio`                    | Browse the database             |
+| `pnpm db:sync-provider`             | Align provider with the URL     |
 
 ---
 
@@ -165,8 +166,9 @@ features/       Feature modules (schema + service + components + api client)
                 auth/ events/ bookings/ tickets/ coupons/ organizer/ admin/
                 dashboard/ profile/
 lib/            Prisma client, env, auth, http helpers, utils, logger
-prisma/         schema.prisma, migrations, seed.ts
-scripts/        prepare-db.mjs — swaps the Prisma provider at deploy time
+prisma/         schema.prisma, seed.ts
+scripts/        prepare-db.mjs — syncs the Prisma provider with DATABASE_URL
+                check-db-config.mjs — fails the build on a provider/URL mismatch
 docs/           Architecture, flow diagrams, ER diagram, API + deployment docs
 proxy.ts        Route protection (Next 16's replacement for middleware)
 ```
@@ -201,17 +203,18 @@ Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 The full walkthrough — Neon Postgres, environment variables, Vercel import and a
 verification checklist — lives in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). In short:
 
-1. **Database** — create a free Postgres instance (Neon / Supabase / Railway) and copy its
-   connection string.
-2. **Schema + seed** — from your machine:
-   `pnpm db:use-postgres && pnpm prisma db push && pnpm db:seed && pnpm db:use-sqlite`
-3. **App** — import the repo into Vercel. `vercel.json` already sets the build command, and
-   `scripts/prepare-db.mjs` switches Prisma to Postgres automatically when
-   `DATABASE_PROVIDER=postgresql` is set.
-4. **Environment variables** — at minimum `DATABASE_URL`, `DATABASE_PROVIDER`,
-   `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` and `NEXT_PUBLIC_APP_URL`.
+1. **Database** — create a free Postgres instance (Neon / Supabase / Railway), put the
+   connection string in `DATABASE_URL`, then `pnpm db:push && pnpm db:seed`.
+2. **App** — import the repo into Vercel. `vercel.json` sets the build command
+   (`pnpm vercel-build`); the Prisma provider is inferred from `DATABASE_URL`, so there is no
+   provider flag to configure.
+3. **Environment variables** — at minimum `DATABASE_URL`, `JWT_ACCESS_SECRET`,
+   `JWT_REFRESH_SECRET` and `NEXT_PUBLIC_APP_URL` (add them for Preview as well as Production).
+4. **Verify** — `curl https://your-app.vercel.app/api/health` should return `status: "ok"`.
 
-> `NEXT_PUBLIC_APP_URL` is inlined at build time — set it, then redeploy if you change it.
+> The build runs `scripts/check-db-config.mjs`, which fails if the generated client cannot
+> read `DATABASE_URL`. A Prisma provider/URL mismatch can otherwise pass the build and 500 at
+> runtime, so treat the build badge as insufficient and check `/api/health`.
 
 ---
 
