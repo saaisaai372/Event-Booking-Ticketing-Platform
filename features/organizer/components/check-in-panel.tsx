@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, apiFetch } from "@/lib/api-client";
+import { QrCameraScanner } from "@/features/organizer/components/qr-camera-scanner";
 
 interface CheckInResult {
   code: string;
@@ -52,10 +53,20 @@ export function CheckInPanel() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ScanLine className="size-5 text-primary" />
-            Scan or enter a ticket code
+            Check in a ticket
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
+          <QrCameraScanner onScan={checkIn} busy={busy} />
+
+          <div className="flex items-center gap-3">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              or type it
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
           <form
             onSubmit={(event) => {
               event.preventDefault();
