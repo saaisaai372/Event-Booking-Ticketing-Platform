@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, apiFetch } from "@/lib/api-client";
+import { couponApi, type CouponPreview } from "@/features/coupons/coupon.api";
 import { formatMoney } from "@/lib/utils";
 
 export interface PublicTicketType {
@@ -42,6 +43,10 @@ export function BookingWidget({
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [couponCode, setCouponCode] = useState("");
+  const [coupon, setCoupon] = useState<CouponPreview | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
 
   const total = useMemo(
     () =>
@@ -53,6 +58,37 @@ export function BookingWidget({
     () => Object.values(quantities).reduce((sum, value) => sum + value, 0),
     [quantities],
   );
+
+  const discount = useMemo(() => {
+    if (!coupon?.valid || total === 0) return 0;
+    if (coupon.discountType === "PERCENT") {
+      return Math.round((total * (coupon.discountValue ?? 0)) / 100);
+    }
+    return Math.min(coupon.discountValue ?? 0, total);
+  }, [coupon, total]);
+
+  const payable = Math.max(0, total - discount);
+
+  async function applyCoupon() {
+    setCouponError(null);
+    setApplyingCoupon(true);
+    try {
+      const result = await couponApi.validate(couponCode.trim(), eventId);
+      if (!result.valid) {
+        setCoupon(null);
+        setCouponError("That coupon code isn't valid for this event.");
+        return;
+      }
+      setCoupon(result);
+      toast.success(`Coupon applied — ${result.description}`);
+    } catch (caught) {
+      setCouponError(
+        caught instanceof ApiError ? caught.message : "Could not check that coupon.",
+      );
+    } finally {
+      setApplyingCoupon(false);
+    }
+  }
 
   const ctaLabel =
     selectedCount > 0
@@ -84,7 +120,7 @@ export function BookingWidget({
     try {
       const result = await apiFetch<{ booking: { id: string } }>("/api/bookings/holds", {
         method: "POST",
-        body: { eventId, items },
+        body: { eventId, items, couponCode: coupon?.valid ? coupon.code : undefined },
       });
       toast.success("Seats held for 10 minutes — complete payment to confirm.");
       router.push(`/checkout/${result.booking.id}`);
@@ -181,9 +217,66 @@ export function BookingWidget({
           </ul>
         )}
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <span className="text-sm text-muted-foreground">Total</span>
-          <span className="text-lg font-semibold">{formatMoney(total)}</span>
+        <div className="space-y-3 border-t border-border pt-4">
+          {coupon?.valid ? (
+            <div className="flex items-center justify-between gap-2 rounded-lg bg-success/10 px-3 py-2 text-xs">
+              <span className="font-medium text-success">
+                {coupon.code} applied — {coupon.description}
+              </span>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setCoupon(null);
+                  setCouponCode("");
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <Input
+                value={couponCode}
+                onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+                placeholder="Coupon code"
+                aria-label="Coupon code"
+                className="uppercase"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={applyingCoupon || couponCode.trim().length === 0}
+                onClick={applyCoupon}
+              >
+                {applyingCoupon ? <Spinner /> : null}
+                Apply
+              </Button>
+            </div>
+          )}
+
+          {couponError ? (
+            <Alert variant="destructive" className="text-xs">
+              {couponError}
+            </Alert>
+          ) : null}
+
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>Subtotal</span>
+            <span>{formatMoney(total)}</span>
+          </div>
+
+          {discount > 0 ? (
+            <div className="flex items-center justify-between text-sm text-success">
+              <span>Discount</span>
+              <span>-{formatMoney(discount)}</span>
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Total</span>
+            <span className="text-lg font-semibold">{formatMoney(payable)}</span>
+          </div>
         </div>
 
         <Button

@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getSessionUser } from "@/lib/auth/session";
 import { getOrganizerEvent } from "@/features/events/organizer.service";
 import { getEventStats, listEventAttendees } from "@/features/tickets/ticket.service";
+import { CouponsPanel } from "@/features/coupons/components/coupons-panel";
 import { formatDateTime, formatMoney } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Manage event" };
@@ -106,6 +107,8 @@ export default async function ManageEventPage({
           </table>
         </CardContent>
       </Card>
+
+      <CouponsPanel eventId={event.id} />
 
       <Card>
         <CardHeader>
