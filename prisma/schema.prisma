@@ -1,0 +1,294 @@
+// Evently — Event Booking & Ticketing Platform
+//
+// Local dev uses SQLite (no external service required). For production, switch
+// `provider` to "postgresql" and point DATABASE_URL at Neon/Supabase/Railway.
+// Status/role fields are plain strings (SQLite has no native enums) and are
+// validated in the service layer with Zod — the allowed values are in ./src?? comments.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// role: ATTENDEE | ORGANIZER | ADMIN
+// organizerStatus: NONE | PENDING | APPROVED | REJECTED
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String
+  name            String
+  role            String   @default("ATTENDEE")
+  avatarUrl       String?
+  phone           String?
+  bio             String?
+  emailVerified   Boolean  @default(false)
+  organizerStatus String   @default("NONE")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  events           Event[]             @relation("OrganizerEvents")
+  bookings         Booking[]
+  tickets          Ticket[]            @relation("AttendeeTickets")
+  checkedInTickets Ticket[]            @relation("CheckedInBy")
+  notifications    Notification[]
+  refreshTokens    RefreshToken[]
+  savedEvents      SavedEvent[]
+  seatHolds        SeatHold[]
+  tokens           VerificationToken[]
+  coupons          Coupon[]            @relation("CouponCreator")
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  userAgent String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// type: EMAIL_VERIFICATION | PASSWORD_RESET
+model VerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  type      String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Category {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  slug   String  @unique
+  icon   String?
+  events Event[]
+}
+
+// status: DRAFT | PENDING | APPROVED | REJECTED | CANCELLED
+model Event {
+  id              String    @id @default(cuid())
+  organizerId     String
+  categoryId      String?
+  title           String
+  slug            String    @unique
+  summary         String?
+  description     String
+  bannerUrl       String?
+  venueName       String?
+  venueAddress    String?
+  city            String?
+  isOnline        Boolean   @default(false)
+  onlineUrl       String?
+  startAt         DateTime
+  endAt           DateTime
+  status          String    @default("DRAFT")
+  rejectionReason String?
+  publishedAt     DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organizer   User         @relation("OrganizerEvents", fields: [organizerId], references: [id], onDelete: Cascade)
+  category    Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  ticketTypes TicketType[]
+  bookings    Booking[]
+  tickets     Ticket[]
+  coupons     Coupon[]
+  savedBy     SavedEvent[]
+  seatHolds   SeatHold[]
+
+  @@index([status, startAt])
+  @@index([categoryId])
+  @@index([city])
+  @@index([organizerId])
+}
+
+model TicketType {
+  id          String    @id @default(cuid())
+  eventId     String
+  name        String
+  description String?
+  price       Int // minor units (paise / cents)
+  quantity    Int
+  sold        Int       @default(0)
+  saleStartAt DateTime?
+  saleEndAt   DateTime?
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bookingItems BookingItem[]
+  tickets      Ticket[]
+  seatHolds    SeatHold[]
+
+  @@index([eventId])
+}
+
+// status: HELD | CONVERTED | EXPIRED | RELEASED
+model SeatHold {
+  id           String   @id @default(cuid())
+  userId       String
+  eventId      String
+  ticketTypeId String
+  quantity     Int
+  status       String   @default("HELD")
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  bookingId    String?  @unique
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event      Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  booking    Booking?   @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+  @@index([userId])
+}
+
+// status: PENDING | CONFIRMED | CANCELLED | EXPIRED
+model Booking {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  userId      String
+  eventId     String
+  status      String    @default("PENDING")
+  subtotal    Int
+  discount    Int       @default(0)
+  total       Int
+  couponCode  String?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+  expiresAt   DateTime?
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event   Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  items   BookingItem[]
+  tickets Ticket[]
+  payment Payment?
+  hold    SeatHold?
+
+  @@index([userId, status])
+  @@index([eventId])
+  @@index([status, expiresAt])
+}
+
+model BookingItem {
+  id           String @id @default(cuid())
+  bookingId    String
+  ticketTypeId String
+  quantity     Int
+  unitPrice    Int
+  subtotal     Int
+
+  booking    Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+}
+
+// status: VALID | USED | CANCELLED
+model Ticket {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  bookingId    String
+  eventId      String
+  ticketTypeId String
+  userId       String
+  qrToken      String    @unique
+  status       String    @default("VALID")
+  checkedInAt  DateTime?
+  checkedInBy  String?
+  createdAt    DateTime  @default(now())
+
+  booking    Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  event      Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  user       User       @relation("AttendeeTickets", fields: [userId], references: [id], onDelete: Cascade)
+  scanner    User?      @relation("CheckedInBy", fields: [checkedInBy], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([eventId])
+  @@index([bookingId])
+}
+
+// method: CARD | UPI   status: PENDING | SUCCESS | FAILED
+// NOTE: mock gateway only — no card / UPI credentials are ever persisted.
+model Payment {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  method    String
+  status    String   @default("PENDING")
+  amount    Int
+  reference String   @unique
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+// discountType: PERCENT | FIXED
+model Coupon {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  eventId       String?
+  createdById   String
+  discountType  String
+  discountValue Int
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  event     Event? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("CouponCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model SavedEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  eventId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventId])
+}
