@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+build
+coverage
+pnpm-lock.yaml
+next-env.d.ts
+.commandcode
+prisma/migrations
+Intern_Project_Event_Booking_Requirements.md
+AGENTS.md
+.terminal_history.json
+.devserver.log
