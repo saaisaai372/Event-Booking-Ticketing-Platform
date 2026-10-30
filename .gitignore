@@ -35,10 +35,9 @@ yarn-error.log*
 .env*
 !.env.example
 
-# database (local dev SQLite)
+# database (local SQLite, if DATABASE_URL points at a file)
 /prisma/*.db
 /prisma/*.db-journal
-/prisma/migrations/dev.db*
 
 # vercel
 .vercel

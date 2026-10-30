@@ -1,48 +1,87 @@
 #!/usr/bin/env node
 /**
- * Switch the Prisma datasource provider without hand-editing the schema.
+ * Keep the Prisma datasource provider in sync with DATABASE_URL.
  *
- *   node scripts/prepare-db.mjs --postgres   # rewrite to postgresql
- *   node scripts/prepare-db.mjs --sqlite     # rewrite back to sqlite
- *   node scripts/prepare-db.mjs              # use DATABASE_PROVIDER, else no-op
+ * The provider is inferred from the URL scheme, so there is no flag to forget:
  *
- * Deployment uses the no-flag form: set DATABASE_PROVIDER=postgresql on the
- * host and the build picks the right client. Locally the variable is unset, so
- * the schema stays on SQLite and nothing changes.
+ *   file:...                        -> sqlite
+ *   postgres:// / postgresql://     -> postgresql
+ *
+ * Explicit `--sqlite` / `--postgres` flags override the inference, but a flag that
+ * contradicts DATABASE_URL is treated as an error rather than silently producing a
+ * client that cannot connect.
+ *
+ * Runs automatically from `postinstall` and `vercel-build`.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const SCHEMA_PATH = path.join(process.cwd(), "prisma", "schema.prisma");
-const PROVIDERS = new Set(["sqlite", "postgresql"]);
+const PATTERN = /(datasource\s+db\s*\{[^}]*?provider\s*=\s*)"(sqlite|postgresql)"/;
 
-function resolveProvider(argv) {
-  if (argv.includes("--postgres") || argv.includes("--postgresql")) return "postgresql";
-  if (argv.includes("--sqlite")) return "sqlite";
+// Locally DATABASE_URL lives in .env, which `node` does not load by itself.
+if (!process.env.DATABASE_URL) {
+  try {
+    process.loadEnvFile?.();
+  } catch {
+    // No .env file — fine on a host that injects real environment variables.
+  }
+}
 
-  const fromEnv = (process.env.DATABASE_PROVIDER ?? "").trim().toLowerCase();
-  if (fromEnv === "postgres" || fromEnv === "postgresql") return "postgresql";
-  if (fromEnv === "sqlite") return "sqlite";
+function providerFromUrl(url) {
+  const value = (url ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .toLowerCase();
+  if (value.startsWith("file:")) return "sqlite";
+  if (value.startsWith("postgres://") || value.startsWith("postgresql://")) {
+    return "postgresql";
+  }
   return null;
 }
 
-const target = resolveProvider(process.argv.slice(2));
+function flagProvider(argv) {
+  if (argv.includes("--postgres") || argv.includes("--postgresql")) return "postgresql";
+  if (argv.includes("--sqlite")) return "sqlite";
+  return null;
+}
 
-if (!target) {
+const argv = process.argv.slice(2);
+const fromFlag = flagProvider(argv);
+const fromProviderVar = (() => {
+  const value = (process.env.DATABASE_PROVIDER ?? "").trim().toLowerCase();
+  if (value === "postgres" || value === "postgresql") return "postgresql";
+  if (value === "sqlite") return "sqlite";
+  return null;
+})();
+const fromUrl = providerFromUrl(process.env.DATABASE_URL);
+
+const requested = fromFlag ?? fromProviderVar ?? fromUrl;
+
+if (!requested) {
   console.log(
-    "[prepare-db] DATABASE_PROVIDER is not set — leaving prisma/schema.prisma on its current provider.",
+    "[prepare-db] No DATABASE_URL and no provider hint — leaving prisma/schema.prisma untouched.",
   );
   process.exit(0);
 }
 
-if (!PROVIDERS.has(target)) {
-  console.error(`[prepare-db] Unsupported provider: ${target}`);
+// A provider that disagrees with the URL can only ever produce a broken client.
+if (fromUrl && fromUrl !== requested) {
+  const source = fromFlag
+    ? `the ${fromFlag === "sqlite" ? "--sqlite" : "--postgres"} flag`
+    : "DATABASE_PROVIDER";
+  console.error(
+    `[prepare-db] Refusing to continue: ${source} asks for "${requested}" but DATABASE_URL is a "${fromUrl}" URL.`,
+  );
+  console.error(
+    "[prepare-db] Fix DATABASE_URL, or unset the override so the provider can follow the URL.",
+  );
   process.exit(1);
 }
 
-const source = readFileSync(SCHEMA_PATH, "utf8");
-const pattern = /(datasource\s+db\s*\{[^}]*?provider\s*=\s*)"(sqlite|postgresql)"/;
-const match = source.match(pattern);
+const source = fromFlag ? "flag" : fromProviderVar ? "DATABASE_PROVIDER" : "DATABASE_URL";
+const schema = readFileSync(SCHEMA_PATH, "utf8");
+const match = schema.match(PATTERN);
 
 if (!match) {
   console.error(
@@ -51,10 +90,10 @@ if (!match) {
   process.exit(1);
 }
 
-if (match[2] === target) {
-  console.log(`[prepare-db] prisma/schema.prisma already uses "${target}".`);
+if (match[2] === requested) {
+  console.log(`[prepare-db] provider "${requested}" already set (via ${source}).`);
   process.exit(0);
 }
 
-writeFileSync(SCHEMA_PATH, source.replace(pattern, `$1"${target}"`), "utf8");
-console.log(`[prepare-db] prisma/schema.prisma provider set to "${target}".`);
+writeFileSync(SCHEMA_PATH, schema.replace(PATTERN, `$1"${requested}"`), "utf8");
+console.log(`[prepare-db] provider set to "${requested}" (via ${source}).`);
